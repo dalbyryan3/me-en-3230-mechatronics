@@ -12,7 +12,7 @@
 #define JOYSTICK_2_Y_PIN A2
 
 
-SoftwareSerial unoSerial(XBEE_SERIAL_RX_PIN,XBEE_SERIAL_TX_PIN); // RX TX
+SoftwareSerial xbeeSerial(XBEE_SERIAL_RX_PIN,XBEE_SERIAL_TX_PIN); // RX TX
 
 void setup()
 {
@@ -20,11 +20,16 @@ void setup()
     Serial.begin(9600);
 
     // Begin serial communication over the Xbee module
-    unoSerial.begin(9600);
+    xbeeSerial.begin(9600);
+
+    Serial.println("Setup Complete");
 
 }
 
 void loop()
 {
-    
+    xbeeSerial.write(250);
+    delay(3000);
+    xbeeSerial.write(10);
+    delay(3000);
 }

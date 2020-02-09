@@ -42,9 +42,20 @@ void setup()
     // Initialize the two DualVNH5019 motor shields
     md.init();
 
+    Serial.println("Setup Complete");
+
 }
 
 void loop()
 {
-
+    while(Serial2.available())
+    {
+        int speed = Serial2.read();
+        Serial.print("Setting all motor speeds to: ");
+        Serial.println(speed);
+        md.setM1Speed(speed);
+        md.setM2Speed(speed);
+        md.setM3Speed(speed);
+        md.setM4Speed(speed);
+    }
 }
