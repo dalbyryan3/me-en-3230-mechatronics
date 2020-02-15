@@ -44,8 +44,8 @@ int motor3Speed = 0;
 int motor4Speed = 0;
 int servoValue = 0;
 
-long timeSinceLastPacket = millis(); // millis
-long packetWaitTime = 50000; // millis
+long timeSinceLastDataRequest = millis(); // millis
+long packetWaitTime = 1000; // millis
 
 
 
@@ -65,16 +65,17 @@ void setup()
 
     // Ask for first state
     Serial2.write(255);
+    timeSinceLastDataRequest = millis();
     // Serial.println("ASKING FOR INITIAL DATA");
 }
 
 void loop()
 {
-    if(Serial2.available())
+    if(Serial2.available() > 0)
     {
         if(Serial2.read() == 255) // Extract starting byte
         {
-            // Serial.println("DATA PACKET RECEIVED");
+            Serial.println("DATA PACKET RECEIVED");
             int integersRecieved = 0;
             while (integersRecieved < 6)
             {
@@ -85,7 +86,7 @@ void loop()
                     int reconstructedData = high << 8 | low;
                     recievedData[integersRecieved] = reconstructedData;
                     integersRecieved++;
-                    // Serial.println(reconstructedData);
+                    Serial.println(reconstructedData);
                 }
             }
             // Serial.println();
@@ -94,9 +95,15 @@ void loop()
 
             // Ask for more state
             Serial2.write(255);
-            // Serial.println("ASKING FOR DATA");
-            // Set timeSinceLastPacket to current time
-            timeSinceLastPacket = millis();
+            Serial.println("ASKING FOR DATA");
+            // Set timeSinceLastDataRequest to current time
+            timeSinceLastDataRequest = millis();
+        }
+
+        // Flush any extra data in the buffer
+        while(Serial.available() > 0)
+        {
+            Serial.read();
         }
     }
 
@@ -125,11 +132,12 @@ void loop()
     md.setM4Speed(motor4Speed);
 
     // If no new state has been recieved for a while then ask again
-    // if (timeSinceLastPacket - millis() > packetWaitTime)
-    // {
-    //     Serial2.write(255);
-    //     Serial.println("ASKING FOR DATA BECAUSE OF WAIT TIME");
-    // }
+    if ((millis() - timeSinceLastDataRequest) > packetWaitTime)
+    {
+        Serial2.write(255);
+        timeSinceLastDataRequest = millis();
+        Serial.println("ASKING FOR DATA BECAUSE OF WAIT TIME");
+    }
 
 }
 
