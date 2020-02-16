@@ -28,7 +28,6 @@ void setup()
 
     // Begin serial communication over the Xbee module
     xbeeSerial.begin(9600);
-
     Serial.println("Setup Complete");
 
 }
@@ -40,11 +39,29 @@ void loop()
     {
         // Determine state
         // mode = mode; // IMPLEMENT READ MODE FROM MODE SWITCH
-        // servoValue = map(analogRead(JOYSTICK_2_Y_PIN), 0, 1024, 0, 255); // Will be written using PWM to servos, Arduino only has 0 to 255 range for PWM
-        motor1Speed = map(analogRead(JOYSTICK_1_Y_PIN), 0, 1024, -400, 400); // Will be written using the motor driver library directly to the motor with a speed between -400 and 400
+        servoValue = map(analogRead(JOYSTICK_2_Y_PIN), 0, 1000, -10, 10); 
+        int motorSpeedHorz = map(analogRead(JOYSTICK_1_X_PIN), 0, 1024, -400, 400);
+        int motorSpeedVert = map(analogRead(JOYSTICK_1_Y_PIN), 0, 1024, -400, 400); 
+        motor1Speed = (motorSpeedVert + motorSpeedHorz);
+        motor3Speed = (motorSpeedVert - motorSpeedHorz);
+        if(motor1Speed > 400)
+        {
+            motor1Speed = 400;
+        }
+        if(motor1Speed < -400)
+        {
+            motor1Speed = -400;
+        }
+        if(motor3Speed > 400)
+        {
+            motor3Speed = 400;
+        }
+        if(motor3Speed < -400)
+        {
+            motor3Speed = -400;
+        }
         motor2Speed = motor1Speed;
-        motor3Speed = motor1Speed;
-        motor4Speed = motor1Speed;
+        motor4Speed = motor3Speed;
 
         // Send state in packetized order
 

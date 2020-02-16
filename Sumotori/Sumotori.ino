@@ -3,6 +3,7 @@
 
 // Libraries to be used
 #include <DualVNH5019MotorShieldMod3.h>
+#include <PWMServo.h>
 
 
 // Pin defintions
@@ -30,10 +31,14 @@
 #define MOTOR_4_ENABLE_PIN 23
 #define MOTOR_4_CURRENT_SENSE_PIN A4
 
+#define SERVO_1_PIN 11
+#define SERVO_2_PIN 13
+
 
 // Global objects
 DualVNH5019MotorShieldMod3 md(MOTOR_3_DIRECTION_A_PIN, MOTOR_3_DIRECTION_B_PIN, MOTOR_3_ENABLE_PIN, MOTOR_3_CURRENT_SENSE_PIN, MOTOR_3_SPEED_PIN, MOTOR_4_DIRECTION_A_PIN, MOTOR_4_DIRECTION_B_PIN, MOTOR_4_ENABLE_PIN, MOTOR_4_CURRENT_SENSE_PIN, MOTOR_4_SPEED_PIN);
-
+PWMServo servo1;
+PWMServo servo2;
 
 // Global state set to inital values
 int recievedData[6];
@@ -42,11 +47,15 @@ int motor1Speed = 0;
 int motor2Speed = 0;
 int motor3Speed = 0;
 int motor4Speed = 0;
-int servoValue = 0;
 
-long timeSinceLastDataRequest = millis(); // millis
-long packetWaitTime = 1000; // millis
+int servoPosition = 100;
+int servoIncrement = 0;
 
+long lastDataRequestTime = millis(); // milliseconds
+long packetWaitTime = 100; // milliseconds
+
+long lastServoMoveTime = 0; // milliseconds
+long servoWaitTime = 100; // milliseconds
 
 
 void setup()
@@ -60,14 +69,24 @@ void setup()
     // Initialize the two DualVNH5019 motor shields
     md.init();
 
+    servo1.attach(SERVO_1_PIN);
+    servo2.attach(SERVO_2_PIN);
+    servo1.write(servoPosition);
+    servo2.write(servoPosition);
+    delay(1000);
+    servo1.detach();
+    servo2.detach();
+
     // Setup is complete
     Serial.println("Setup Complete");
 
     // Ask for first state
     Serial2.write(255);
-    timeSinceLastDataRequest = millis();
+    lastDataRequestTime = millis();
     // Serial.println("ASKING FOR INITIAL DATA");
 }
+
+
 
 void loop()
 {
@@ -75,7 +94,7 @@ void loop()
     {
         if(Serial2.read() == 255) // Extract starting byte
         {
-            Serial.println("DATA PACKET RECEIVED");
+            // Serial.println("DATA PACKET RECEIVED");
             int integersRecieved = 0;
             while (integersRecieved < 6)
             {
@@ -86,7 +105,7 @@ void loop()
                     int reconstructedData = high << 8 | low;
                     recievedData[integersRecieved] = reconstructedData;
                     integersRecieved++;
-                    Serial.println(reconstructedData);
+                    // Serial.println(reconstructedData);
                 }
             }
             // Serial.println();
@@ -95,27 +114,31 @@ void loop()
 
             // Ask for more state
             Serial2.write(255);
-            Serial.println("ASKING FOR DATA");
-            // Set timeSinceLastDataRequest to current time
-            timeSinceLastDataRequest = millis();
+            // Serial.println("ASKING FOR DATA");
+            // Set lastDataRequestTime to current time
+            lastDataRequestTime = millis();
         }
 
         // Flush any extra data in the buffer
-        while(Serial.available() > 0)
+        while(Serial2.available() > 0)
         {
-            Serial.read();
+            Serial2.read();
         }
     }
+
+
 
     // IMPLEMENT CHECK MODE
     if(mode == 1)
     {
-        servoValue = recievedData[1];
+        servoIncrement = recievedData[1];
         motor1Speed = recievedData[2];
         motor2Speed = recievedData[3];
         motor3Speed = recievedData[4];
         motor4Speed = recievedData[5];
     }
+
+
 
     // WRITE CURRENT STATE TO MOTORS AND SERVOS
     // Serial.print("Setting motor 1 speed to ");
@@ -131,12 +154,49 @@ void loop()
     // Serial.println(motor4Speed);
     md.setM4Speed(motor4Speed);
 
+    if((millis() - lastServoMoveTime) > servoWaitTime)
+    {
+        servoPosition += servoIncrement;
+        if(servoPosition > 180)
+        {
+            servoPosition = 180;
+        }
+        if(servoPosition < 100)
+        {
+            servoPosition = 100;
+        }
+        // if(servoPosition > 180)
+        // {
+        //     servoPosition = 180;
+        // }
+        // if(servoPosition < 0)
+        // {
+        //     servoPosition = 0;
+        // }
+        servo1.attach(SERVO_1_PIN);
+        servo2.attach(SERVO_2_PIN);
+        servo1.write(servoPosition);
+        servo2.write(map(servoPosition, 100, 180, 180, 100));
+        delay(100);
+        servo1.detach();
+        servo2.detach();
+        Serial.println(servo1.read());
+        Serial.println(servo2.read());
+        Serial.println();
+        lastServoMoveTime = millis();
+
+    }
+
+
+
+
+
     // If no new state has been recieved for a while then ask again
-    if ((millis() - timeSinceLastDataRequest) > packetWaitTime)
+    if ((millis() - lastDataRequestTime) > packetWaitTime)
     {
         Serial2.write(255);
-        timeSinceLastDataRequest = millis();
-        Serial.println("ASKING FOR DATA BECAUSE OF WAIT TIME");
+        lastDataRequestTime = millis();
+        // Serial.println("ASKING FOR DATA BECAUSE OF WAIT TIME");
     }
 
 }
