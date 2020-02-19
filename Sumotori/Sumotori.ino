@@ -55,7 +55,7 @@ long lastDataRequestTime = millis(); // milliseconds
 long packetWaitTime = 100; // milliseconds
 
 long lastServoMoveTime = 0; // milliseconds
-long servoWaitTime = 100; // milliseconds
+long servoWaitTime = 50; // milliseconds
 
 
 void setup()
