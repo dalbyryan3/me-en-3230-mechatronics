@@ -4,11 +4,11 @@
 #include <SoftwareSerial.h>
 
 // Pin defintions
-static const int XBEE_SERIAL_RX_PIN = 2;
-static const int XBEE_SERIAL_TX_PIN = 3;
-static const int JOYSTICK_1_X_PIN = A0;
-static const int JOYSTICK_1_Y_PIN = A1;
-static const int JOYSTICK_2_Y_PIN = A2;
+static const uint8_t XBEE_SERIAL_RX_PIN = 2;
+static const uint8_t XBEE_SERIAL_TX_PIN = 3;
+static const uint8_t JOYSTICK_1_X_PIN = A0;
+static const uint8_t JOYSTICK_1_Y_PIN = A1;
+static const uint8_t JOYSTICK_2_Y_PIN = A2;
 
 // Global objects
 SoftwareSerial xbeeSerial(XBEE_SERIAL_RX_PIN,XBEE_SERIAL_TX_PIN); // RX TX
