@@ -3,63 +3,71 @@
 // Libraries to be used
 #include <DualVNH5019MotorShieldMod3.h>
 #include <PWMServo.h>
+#include <QTRSensors.h>
 
 // Pin defintions
-static const int MOTOR_1_DIRECTION_A_PIN = 2;
-static const int MOTOR_1_DIRECTION_B_PIN = 4;
-static const int MOTOR_1_SPEED_PIN = 9;
-static const int MOTOR_1_ENABLE_PIN = 6;
-static const int MOTOR_1_CURRENT_SENSE_PIN = A0;
+static const uint8_t MOTOR_1_DIRECTION_A_PIN = 2;
+static const uint8_t MOTOR_1_DIRECTION_B_PIN = 4;
+static const uint8_t MOTOR_1_SPEED_PIN = 9;
+static const uint8_t MOTOR_1_ENABLE_PIN = 6;
+static const uint8_t MOTOR_1_CURRENT_SENSE_PIN = A0;
+static const uint8_t MOTOR_2_DIRECTION_A_PIN = 7;
+static const uint8_t MOTOR_2_DIRECTION_B_PIN = 8;
+static const uint8_t MOTOR_2_SPEED_PIN = 10;
+static const uint8_t MOTOR_2_ENABLE_PIN = 12;
+static const uint8_t MOTOR_2_CURRENT_SENSE_PIN = A1;
+static const uint8_t MOTOR_3_DIRECTION_A_PIN = 24;
+static const uint8_t MOTOR_3_DIRECTION_B_PIN = 26;
+static const uint8_t MOTOR_3_SPEED_PIN = 45;
+static const uint8_t MOTOR_3_ENABLE_PIN = 22;
+static const uint8_t MOTOR_3_CURRENT_SENSE_PIN = A3;
+static const uint8_t MOTOR_4_DIRECTION_A_PIN = 25;
+static const uint8_t MOTOR_4_DIRECTION_B_PIN = 27;
+static const uint8_t MOTOR_4_SPEED_PIN = 46;
+static const uint8_t MOTOR_4_ENABLE_PIN = 23;
+static const uint8_t MOTOR_4_CURRENT_SENSE_PIN = A4;
 
-static const int MOTOR_2_DIRECTION_A_PIN = 7;
-static const int MOTOR_2_DIRECTION_B_PIN = 8;
-static const int MOTOR_2_SPEED_PIN = 10;
-static const int MOTOR_2_ENABLE_PIN = 12;
-static const int MOTOR_2_CURRENT_SENSE_PIN = A1;
+// Servo pins
+static const uint8_t SERVO_1_PIN = 11;
+static const uint8_t SERVO_2_PIN = 13;
 
-static const int MOTOR_3_DIRECTION_A_PIN = 24;
-static const int MOTOR_3_DIRECTION_B_PIN = 26;
-static const int MOTOR_3_SPEED_PIN = 45;
-static const int MOTOR_3_ENABLE_PIN = 22;
-static const int MOTOR_3_CURRENT_SENSE_PIN = A3;
-
-static const int MOTOR_4_DIRECTION_A_PIN = 25;
-static const int MOTOR_4_DIRECTION_B_PIN = 27;
-static const int MOTOR_4_SPEED_PIN = 46;
-static const int MOTOR_4_ENABLE_PIN = 23;
-static const int MOTOR_4_CURRENT_SENSE_PIN = A4;
-
-static const int SERVO_1_PIN = 11;
-static const int SERVO_2_PIN = 13;
+// Reflectance sensor pins
+static const uint8_t REFLECTANCE_SENSOR_COUNT = 6;
+static const uint8_t REFLECTANCE_SENSOR_EMITTER_PIN;
+static const uint8_t REFLECTANCE_SENSOR_PINS[REFLECTANCE_SENSOR_COUNT] = {28,29,30,40,41,42};
 
 // Global objects
 DualVNH5019MotorShieldMod3 md(MOTOR_3_DIRECTION_A_PIN, MOTOR_3_DIRECTION_B_PIN, MOTOR_3_ENABLE_PIN, MOTOR_3_CURRENT_SENSE_PIN, MOTOR_3_SPEED_PIN, MOTOR_4_DIRECTION_A_PIN, MOTOR_4_DIRECTION_B_PIN, MOTOR_4_ENABLE_PIN, MOTOR_4_CURRENT_SENSE_PIN, MOTOR_4_SPEED_PIN);
 PWMServo servo1;
 PWMServo servo2;
+QTRSensors reflectanceSensor;
 
 // Global state set to inital values
-int recievedData[4];
-int mode = 1; // 1 is teleoperation mode
+int16_t recievedData[4];
+int16_t mode = 1; // 1 is teleoperation mode
 
 // Motor state variables
-static const int MOTOR_UPPER_LIMIT = 400;
-static const int MOTOR_LOWER_LIMIT = -400;
-int xVelocity = 0;
-int yVelocity = 0;
+static const int16_t MOTOR_UPPER_LIMIT = 400;
+static const int16_t MOTOR_LOWER_LIMIT = -400;
+int16_t xVelocity = 0;
+int16_t yVelocity = 0;
 
 // Serial communication state variables
-long lastDataRequestTime = millis(); // milliseconds
-long packetWaitTime = 100;           // milliseconds
+unsigned long lastDataRequestTime = millis(); // milliseconds
+unsigned long packetWaitTime = 100;           // milliseconds
 
 // Servo state variables
-static const int SERVO_UPPER_LIMIT = 180; // degrees
-static const int SERVO_LOWER_LIMIT = 100; // degrees
-int servoPosition = 100;
-int servoIncrement = 0;
-long lastServoMoveTime = 0; // milliseconds
-long servoWaitTime = 50;    // milliseconds
+static const int16_t SERVO_UPPER_LIMIT = 180; // degrees
+static const int16_t SERVO_LOWER_LIMIT = 100; // degrees
+int16_t servoPosition = 100;
+int16_t servoIncrement = 0;
+unsigned long lastServoMoveTime = 0; // milliseconds
+unsigned long servoWaitTime = 50;    // milliseconds
 
-
+// Reflectance sensor state variables
+uint16_t reflectanceSensorValues[REFLECTANCE_SENSOR_COUNT];
+static const uint16_t reflectanceSensorBias[REFLECTANCE_SENSOR_COUNT] = {250,250,250,250,250,250};
+static const float reflectanceSensorCenter = (REFLECTANCE_SENSOR_COUNT + 1.0) / 2.0;
 
 void setup()
 {
@@ -81,6 +89,11 @@ void setup()
     servo1.detach();
     servo2.detach();
 
+    // Initialize QTR-8RC reflectance sensor
+    reflectanceSensor.setTypeRC();
+    reflectanceSensor.setSensorPins(REFLECTANCE_SENSOR_PINS, REFLECTANCE_SENSOR_COUNT);
+    reflectanceSensor.setEmitterPin(REFLECTANCE_SENSOR_EMITTER_PIN);
+
     // Setup is complete
     Serial.println("Setup Complete");
 
@@ -98,7 +111,7 @@ void loop()
         if (Serial2.read() == 255) // Extract starting byte
         {
             // Serial.println("DATA PACKET RECEIVED");
-            int integersRecieved = 0;
+            int16_t integersRecieved = 0;
             while (integersRecieved < 6)
             {
                 if (Serial2.available() > 1)
@@ -137,6 +150,41 @@ void loop()
         xVelocity = recievedData[2];
         yVelocity = recievedData[3];
     }
+    // For now this mode is PM7 mode
+    if (mode == 2)
+    {
+        // Read raw sensor values
+        reflectanceSensor.read(reflectanceSensorValues);
+
+        // Determine how far sumotori is from center
+        float sum = 0;
+        float weightedSum = 0;
+        for (uint8_t i = 0; i < REFLECTANCE_SENSOR_COUNT; i++)
+        {
+            uint16_t biasedValue = 0;
+            if(reflectanceSensorValues[i] > reflectanceSensorBias[i])
+            {
+                biasedValue = reflectanceSensorValues[i] - reflectanceSensorBias[i];
+            }
+            sum = sum + biasedValue;
+            weightedSum = weightedSum + (biasedValue*(i+1));
+        }
+
+        float lineLocation = weightedSum / sum;
+        float distanceFromCenter = lineLocation - reflectanceSensorCenter;
+
+        // Adjust velocity according to how far sumotori is from center
+        // Can change below to drive proportionally to how for from center the robot is
+        if(distanceFromCenter > 1)
+        {
+            // drive to the left
+        }
+        else if(distanceFromCenter < -1)
+        {
+            // drive to the right
+        }
+
+    }
 
     // Write current motor state
     writeVelocityToMotors();
@@ -159,8 +207,6 @@ void loop()
     }
 }
 
-
-
 // Methods which help abstract code above
 
 // Used translate and write the velocity global state into motor commands
@@ -169,25 +215,25 @@ void writeVelocityToMotors()
 {
     // Will use differential steering between right and left motors to turn sumotori
 
-    int motorSpeedVert = map(yVelocity, -10, 10, MOTOR_LOWER_LIMIT, MOTOR_UPPER_LIMIT);
-    int motorSpeedHorz = map(xVelocity, -10, 10, MOTOR_LOWER_LIMIT, MOTOR_UPPER_LIMIT);
-    int rightMotorSpeed = (motorSpeedVert + motorSpeedHorz); // Motors 1 and 2
-    int leftMotorSpeed = (motorSpeedVert - motorSpeedHorz);  // Motors 3 and 4
+    int16_t motorSpeedVert = map(yVelocity, -10, 10, MOTOR_LOWER_LIMIT, MOTOR_UPPER_LIMIT);
+    int16_t motorSpeedHorz = map(xVelocity, -10, 10, MOTOR_LOWER_LIMIT, MOTOR_UPPER_LIMIT);
+    int16_t rightMotorSpeed = (motorSpeedVert + motorSpeedHorz); // Motors 1 and 2
+    int16_t leftMotorSpeed = (motorSpeedVert - motorSpeedHorz);  // Motors 3 and 4
 
     // Apply upper and lower limits to motor values
-    if(rightMotorSpeed > MOTOR_UPPER_LIMIT)
+    if (rightMotorSpeed > MOTOR_UPPER_LIMIT)
     {
         rightMotorSpeed = MOTOR_UPPER_LIMIT;
     }
-    if(rightMotorSpeed < MOTOR_LOWER_LIMIT)
+    if (rightMotorSpeed < MOTOR_LOWER_LIMIT)
     {
         rightMotorSpeed = MOTOR_LOWER_LIMIT;
     }
-    if(leftMotorSpeed > MOTOR_UPPER_LIMIT)
+    if (leftMotorSpeed > MOTOR_UPPER_LIMIT)
     {
         leftMotorSpeed = MOTOR_UPPER_LIMIT;
     }
-    if(leftMotorSpeed < MOTOR_LOWER_LIMIT)
+    if (leftMotorSpeed < MOTOR_LOWER_LIMIT)
     {
         leftMotorSpeed = MOTOR_LOWER_LIMIT;
     }
