@@ -34,7 +34,11 @@ static const uint8_t SERVO_2_PIN = 13;
 // Reflectance sensor pins
 static const uint8_t REFLECTANCE_SENSOR_COUNT = 8;
 static const uint8_t REFLECTANCE_SENSOR_EMITTER_PIN = 36;
-static const uint8_t REFLECTANCE_SENSOR_PINS[REFLECTANCE_SENSOR_COUNT] = {28,29,30,31,32,33,34,35};
+static const uint8_t REFLECTANCE_SENSOR_PINS[REFLECTANCE_SENSOR_COUNT] = {28, 29, 30, 31, 32, 33, 34, 35};
+
+// Rangefinder sensor pins
+static const uint8_t RANGEFINDER_SENSOR_SIDE_RIGHT_PIN = A5;
+
 
 // Global objects
 DualVNH5019MotorShieldMod3 md(MOTOR_3_DIRECTION_A_PIN, MOTOR_3_DIRECTION_B_PIN, MOTOR_3_ENABLE_PIN, MOTOR_3_CURRENT_SENSE_PIN, MOTOR_3_SPEED_PIN, MOTOR_4_DIRECTION_A_PIN, MOTOR_4_DIRECTION_B_PIN, MOTOR_4_ENABLE_PIN, MOTOR_4_CURRENT_SENSE_PIN, MOTOR_4_SPEED_PIN);
@@ -66,8 +70,20 @@ unsigned long servoWaitTime = 50;    // milliseconds
 
 // Reflectance sensor state variables
 uint16_t reflectanceSensorValues[REFLECTANCE_SENSOR_COUNT];
-static const uint16_t reflectanceSensorBias[REFLECTANCE_SENSOR_COUNT] = {250,250,250,250,250,250};
-static const float reflectanceSensorCenter = (REFLECTANCE_SENSOR_COUNT + 1.0) / 2.0;
+uint16_t reflectanceSensorBias[REFLECTANCE_SENSOR_COUNT] = {1730, 1790, 1450, 1550, 1600, 1500, 1400, 1580}; // For inlab red carpet
+// static const uint16_t reflectanceSensorBias[REFLECTANCE_SENSOR_COUNT] = {500, 500, 500, 500, 500, 500, 500, 500};
+// static const uint16_t reflectanceSensorBias[REFLECTANCE_SENSOR_COUNT] = {1900, 1900,1900,1900,1900,1900,1900,1900};
+static const float REFLECTANCE_SENSOR_DISTANCE_BETWEEN_SENSORS = 1.0; // cm
+static const float REFLECTANCE_SENSOR_CENTER = (REFLECTANCE_SENSOR_COUNT + 1.0) / 2.0;
+static const float REFLECTANCE_SENSOR_SPEED_MULTIPLIER = 25.0;
+
+// Rangefinder sensor state variables
+static const float RANGEFINDER_SENSOR_A_CONSTANT = 12.5;
+static const float RANGEFINDER_SENSOR_B_CONSTANT = -1.0;
+static const float RANGEFINDER_NOMINAL_WALL_DISTANCE = 20.0; // cm
+static const float RANGEFINDER_NOMINAL_WALL_MULTIPLIER = 25.0;
+
+
 
 void setup()
 {
@@ -83,19 +99,22 @@ void setup()
     // Initialize servo
     servo1.attach(SERVO_1_PIN);
     servo2.attach(SERVO_2_PIN);
-    servo1.write(servoPosition);
-    servo2.write(servoPosition);
+    writeServoIncrementToServos(); // Writes intital servo positions
+
     delay(1000);
-    servo1.detach();
-    servo2.detach();
 
     // Initialize QTR-8RC reflectance sensor
     reflectanceSensor.setTypeRC();
     reflectanceSensor.setSensorPins(REFLECTANCE_SENSOR_PINS, REFLECTANCE_SENSOR_COUNT);
     reflectanceSensor.setEmitterPin(REFLECTANCE_SENSOR_EMITTER_PIN);
+    // IMPLEMENT READ INTITAL VALUES AND MAKE IT BIAS
+    for(int i = 0; i < REFLECTANCE_SENSOR_COUNT; i++) // Add to bias to guarentee the "zero" value stays the zero value even with noise
+    {
+        reflectanceSensorBias[i] = reflectanceSensorBias[i] + 200;
+    }
 
     // Setup is complete
-    Serial.println("Setup Complete");
+    // Serial.println("Setup Complete");
 
     // Ask for first state
     Serial2.write(255);
@@ -112,7 +131,7 @@ void loop()
         {
             // Serial.println("DATA PACKET RECEIVED");
             int16_t integersRecieved = 0;
-            while (integersRecieved < 6)
+            while (integersRecieved < 4)
             {
                 if (Serial2.available() > 1)
                 {
@@ -150,41 +169,82 @@ void loop()
         xVelocity = recievedData[2];
         yVelocity = recievedData[3];
     }
-    // For now this mode is PM7 mode
+    // For now this mode is PM7 line tracking mode
     if (mode == 2)
     {
         // Read raw sensor values
         reflectanceSensor.read(reflectanceSensorValues);
-
         // Determine how far sumotori is from center
         float sum = 0;
         float weightedSum = 0;
         for (uint8_t i = 0; i < REFLECTANCE_SENSOR_COUNT; i++)
         {
+            // Serial.print(reflectanceSensorValues[i]); 
+            // Serial.print("    "); 
             uint16_t biasedValue = 0;
-            if(reflectanceSensorValues[i] > reflectanceSensorBias[i])
+            if (reflectanceSensorValues[i] > reflectanceSensorBias[i])
             {
                 biasedValue = reflectanceSensorValues[i] - reflectanceSensorBias[i];
             }
             sum = sum + biasedValue;
-            weightedSum = weightedSum + (biasedValue*(i+1));
+            weightedSum = weightedSum + (biasedValue * (i + 1));
         }
 
-        float lineLocation = weightedSum / sum;
-        float distanceFromCenter = lineLocation - reflectanceSensorCenter;
-
-        // Adjust velocity according to how far sumotori is from center
-        // Can change below to drive proportionally to how for from center the robot is
-        if(distanceFromCenter > 1)
+        // Serial.println();
+        yVelocity = 50;
+        if (sum == 0) // This means we are not over a line
         {
-            // drive to the left
+            xVelocity = 0;
         }
-        else if(distanceFromCenter < -1)
+        else
         {
-            // drive to the right
+            float lineLocation = weightedSum / sum;
+            float distanceFromCenter = (lineLocation - REFLECTANCE_SENSOR_CENTER) * REFLECTANCE_SENSOR_DISTANCE_BETWEEN_SENSORS;
+            float normalizedDistanceFromCenter = distanceFromCenter / 3.5; // Normalize distance from center to -1 to 1 since can be -3.5 to 3.5
+            int16_t newXVelocity = normalizedDistanceFromCenter * REFLECTANCE_SENSOR_SPEED_MULTIPLIER * -1; // Will scale and flip our normalizedDistanceFromCenter
+            // Serial.println(newXVelocity);
+            xVelocity = newXVelocity;
+            if(abs(distanceFromCenter) > .25 && abs(distanceFromCenter) < 1.0)
+            {
+                yVelocity = yVelocity *  (3.0 / 4.0);
+            }
+            else if(abs(distanceFromCenter) > 1.5 && abs(distanceFromCenter) < 2.0)
+            {
+                yVelocity = yVelocity / 2.0;
+            }
+            else if(abs(distanceFromCenter) > 2.0 && abs(distanceFromCenter) < 3.0)
+            {
+                yVelocity = yVelocity / 4.0;
+            }
+            else if(abs(distanceFromCenter) > 3.0)
+            {
+                yVelocity = 0.0;
+            }
         }
 
     }
+
+    // For now this mode is PM7 wall tracking mode
+    if (mode == 3)
+    {
+        yVelocity = 25;
+        float distance = rangefinderSensorPowerFunction(map(analogRead(RANGEFINDER_SENSOR_SIDE_RIGHT_PIN), 0, 1024, 0, 5000)/1000.0);
+        // Serial.println(distance);
+        float normalizedDistanceFromNominal = (distance - RANGEFINDER_NOMINAL_WALL_DISTANCE) / 5.0;
+        int16_t newXVelocity = normalizedDistanceFromNominal * RANGEFINDER_NOMINAL_WALL_MULTIPLIER * -1;
+        // Serial.println(newXVelocity);
+        // Serial.println();
+        xVelocity = newXVelocity;
+        if(xVelocity > 15)
+        {
+            xVelocity = 15;
+        }
+        else if(xVelocity < -15)
+        {
+            xVelocity = -15;
+        }
+    }
+
 
     // Write current motor state
     writeVelocityToMotors();
@@ -205,6 +265,9 @@ void loop()
         lastDataRequestTime = millis();
         // Serial.println("ASKING FOR DATA BECAUSE OF WAIT TIME");
     }
+        // Serial.println(servo1.read());
+        // Serial.println(servo2.read());
+        // Serial.println();
 }
 
 // Methods which help abstract code above
@@ -215,8 +278,8 @@ void writeVelocityToMotors()
 {
     // Will use differential steering between right and left motors to turn sumotori
 
-    int16_t motorSpeedVert = map(yVelocity, -10, 10, MOTOR_LOWER_LIMIT, MOTOR_UPPER_LIMIT);
-    int16_t motorSpeedHorz = map(xVelocity, -10, 10, MOTOR_LOWER_LIMIT, MOTOR_UPPER_LIMIT);
+    int16_t motorSpeedVert = map(yVelocity, -100, 100, MOTOR_LOWER_LIMIT, MOTOR_UPPER_LIMIT);
+    int16_t motorSpeedHorz = map(xVelocity, -100, 100, MOTOR_LOWER_LIMIT, MOTOR_UPPER_LIMIT);
     int16_t rightMotorSpeed = (motorSpeedVert + motorSpeedHorz); // Motors 1 and 2
     int16_t leftMotorSpeed = (motorSpeedVert - motorSpeedHorz);  // Motors 3 and 4
 
@@ -241,13 +304,13 @@ void writeVelocityToMotors()
     // Write motor speeds
     md.setM1Speed(rightMotorSpeed);
     // Serial.print("Setting motor 2 speed to ");
-    // Serial.println(motor2Speed);
+    // Serial.println(rightMotorSpeed);
     md.setM2Speed(rightMotorSpeed);
     // Serial.print("Setting motor 3 speed to ");
-    // Serial.println(motor3Speed);
+    // Serial.println(rightMotorSpeed);
     md.setM3Speed(leftMotorSpeed);
     // Serial.print("Setting motor 4 speed to ");
-    // Serial.println(motor4Speed);
+    // Serial.println(leftMotorSpeed);
     md.setM4Speed(leftMotorSpeed);
 }
 
@@ -268,11 +331,13 @@ void writeServoIncrementToServos()
     }
 
     // Write servo values
-    servo1.attach(SERVO_1_PIN);
-    servo2.attach(SERVO_2_PIN);
     servo1.write(servoPosition);
     servo2.write(map(servoPosition, 100, 180, 180, 100));
     delay(100);
-    servo1.detach();
-    servo2.detach();
+}
+
+// Translates rangefinder voltage in volts to distance in centimeters using the rangefinder power function derived from experimental data
+float rangefinderSensorPowerFunction(float voltage)
+{
+    return RANGEFINDER_SENSOR_A_CONSTANT * pow(voltage,RANGEFINDER_SENSOR_B_CONSTANT);
 }
