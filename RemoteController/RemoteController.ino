@@ -34,8 +34,11 @@ void setup()
 
     // Setup digital pins
     pinMode(JOYSTICK_1_BUTTON_PIN, INPUT);
+    digitalWrite(JOYSTICK_1_BUTTON_PIN, HIGH);
     pinMode(JOYSTICK_2_BUTTON_PIN, INPUT);
+    digitalWrite(JOYSTICK_2_BUTTON_PIN, HIGH);
     pinMode(NEUTRAL_BUTTON_PIN, INPUT);
+    digitalWrite(NEUTRAL_BUTTON_PIN, HIGH);
 
     // Serial.println("Setup Complete");
 
@@ -48,22 +51,24 @@ void loop()
     {
         // Determine state remote controller 
         // Determine mode
-        if (digitalRead(NEUTRAL_BUTTON_PIN))
+
+        if (digitalRead(NEUTRAL_BUTTON_PIN) == LOW)
         {
             // Change mode to netural
             mode = 3;
         }
-        else if (digitalRead(JOYSTICK_1_BUTTON_PIN))
-        {
-            // Change mode to autonomous
-            mode = 1;
-
-        }
-        else if (digitalRead(JOYSTICK_2_BUTTON_PIN))
+        else if (digitalRead(JOYSTICK_1_BUTTON_PIN) == LOW)
         {
             // Change mode to teleoperation
             mode = 2;
+
         }
+        else if (digitalRead(JOYSTICK_2_BUTTON_PIN) == LOW)
+        {
+            // Change mode to autonomous 
+            mode = 1;
+        }
+        // Serial.println(mode);
 
         // Determine servo position
         int16_t servoAnalogValue = analogRead(JOYSTICK_2_Y_PIN); // Should have range of 0 to 1023
@@ -75,6 +80,11 @@ void loop()
         {
             servoIncrement = -80; // degrees
         }
+        else
+        {
+            servoIncrement = 0;
+        }
+        
 
         // Determine velocity values
         xVelocity = map(analogRead(JOYSTICK_1_X_PIN), 0, 1023, -100, 100);
@@ -89,7 +99,7 @@ void loop()
         xbeeSerialWriteInt(servoIncrement);
         xbeeSerialWriteInt(xVelocity);
         xbeeSerialWriteInt(yVelocity);
-        // Serial.println("PACKET SENT");
+        Serial.println("PACKET SENT");
         Serial.println();
     }
 }

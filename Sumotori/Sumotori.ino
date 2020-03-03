@@ -39,6 +39,9 @@ static const uint8_t REFLECTANCE_SENSOR_PINS[REFLECTANCE_SENSOR_COUNT] = {28, 29
 // Rangefinder sensor pins
 static const uint8_t RANGEFINDER_SENSOR_SIDE_RIGHT_PIN = A5;
 
+// Hall effect sensor pins
+static const uint8_t HALL_EFFECT_SENSOR_PIN = A2;
+
 
 // Global objects
 DualVNH5019MotorShieldMod3 md(MOTOR_3_DIRECTION_A_PIN, MOTOR_3_DIRECTION_B_PIN, MOTOR_3_ENABLE_PIN, MOTOR_3_CURRENT_SENSE_PIN, MOTOR_3_SPEED_PIN, MOTOR_4_DIRECTION_A_PIN, MOTOR_4_DIRECTION_B_PIN, MOTOR_4_ENABLE_PIN, MOTOR_4_CURRENT_SENSE_PIN, MOTOR_4_SPEED_PIN);
@@ -48,9 +51,9 @@ QTRSensors reflectanceSensor;
 
 // Global state set to inital values
 int16_t recievedData[4];
-int16_t mode = 1; // 1 is teleoperation mode
+int16_t mode = 3; // 3 is neutral mode
 
-// Motor state variables
+// Motor state variables 
 static const int16_t MOTOR_UPPER_LIMIT = 400;
 static const int16_t MOTOR_LOWER_LIMIT = -400;
 int16_t xVelocity = 0;
@@ -83,6 +86,10 @@ static const float RANGEFINDER_SENSOR_B_CONSTANT = -1.0;
 static const float RANGEFINDER_NOMINAL_WALL_DISTANCE = 20.0; // cm
 static const float RANGEFINDER_NOMINAL_WALL_MULTIPLIER = 25.0;
 
+// Hall effect sensor state variables
+static const int16_t HALL_EFFECT_SENSOR_LOW_THRESHOLD = 426; // On a 0 to 1023 scale which maps to 0 to 5 V sensor output
+static const int16_t HALL_EFFECT_SENSOR_HIGH_THRESHOLD = 760; // On a 0 to 1023 scale which maps to 0 to 5 V sensor output
+bool isIntroductoryMode = false;
 
 
 void setup()
@@ -145,7 +152,11 @@ void loop()
             }
             // Serial.println();
             // IMPLEMENT UPDATE MODE
-            mode = recievedData[0];
+            if (recievedData[0] != mode)
+            {
+                mode = recievedData[0];
+                isIntroductoryMode = false; // If we updated the mode want to change out of introductory mode
+            }   
 
             // Ask for more state
             Serial2.write(255);
@@ -161,16 +172,42 @@ void loop()
         }
     }
 
-    // IMPLEMENT CHECK MODE
     // Determine mode and modify global sumotori state
-    if (mode == 1)
+    // Autonomous mode
+    if (mode == 1 && !isIntroductoryMode)
+    {
+
+    }
+    // Remote control mode
+    if (mode == 2 && !isIntroductoryMode)
     {
         servoIncrement = recievedData[1];
         xVelocity = recievedData[2];
         yVelocity = recievedData[3];
     }
+    // Neutral mode- Will do nothing other than wait for Hall Effect sensor to be triggered to begin introductory mode
+    if (mode == 3 && !isIntroductoryMode)
+    {
+        xVelocity = 0;
+        yVelocity = 0;
+        servoIncrement = 0;
+        uint16_t hallEffectReading = analogRead(HALL_EFFECT_SENSOR_PIN); 
+        // Serial.println(hallEffectReading);
+        if (hallEffectReading <= HALL_EFFECT_SENSOR_LOW_THRESHOLD || hallEffectReading >= HALL_EFFECT_SENSOR_HIGH_THRESHOLD)
+        {
+            isIntroductoryMode = true;
+            // Serial.println(" TRIGGERED ");
+        }
+    }
+    // Introductory Mode
+    if (isIntroductoryMode)
+    {
+        yVelocity = 10;
+    }
+
+
     // For now this mode is PM7 line tracking mode
-    if (mode == 2)
+    if (mode == 5)
     {
         // Read raw sensor values
         reflectanceSensor.read(reflectanceSensorValues);
@@ -225,7 +262,7 @@ void loop()
     }
 
     // For now this mode is PM7 wall tracking mode
-    if (mode == 3)
+    if (mode == 6)
     {
         yVelocity = 25;
         float distance = rangefinderSensorPowerFunction(map(analogRead(RANGEFINDER_SENSOR_SIDE_RIGHT_PIN), 0, 1024, 0, 5000)/1000.0);
