@@ -1,11 +1,15 @@
+
 // ME EN 3220   Mechanical-Basho Arduino Mega 2560 Code     Ryan Dalby, Colby Smith, Aaron Fowlks Landon O'Camb
 
 // Libraries to be used
 #include <DualVNH5019MotorShieldMod3.h>
 #include <PWMServo.h>
 #include <QTRSensors.h>
+#include <Encoder.h>
+#include <math.h>
 
 // Pin defintions
+// Motor Pins
 static const uint8_t MOTOR_1_DIRECTION_A_PIN = 2;
 static const uint8_t MOTOR_1_DIRECTION_B_PIN = 4;
 static const uint8_t MOTOR_1_SPEED_PIN = 9;
@@ -42,18 +46,26 @@ static const uint8_t RANGEFINDER_SENSOR_SIDE_RIGHT_PIN = A5;
 // Hall effect sensor pins
 static const uint8_t HALL_EFFECT_SENSOR_PIN = A2;
 
+// Encoder pins
+static const uint8_t MOTOR_2_ENCODER_PIN_1 = 18;
+static const uint8_t MOTOR_2_ENCODER_PIN_2 = 19;
+
+static const uint8_t MOTOR_3_ENCODER_PIN_1 = 20;
+static const uint8_t MOTOR_3_ENCODER_PIN_2 = 21;
 
 // Global objects
 DualVNH5019MotorShieldMod3 md(MOTOR_3_DIRECTION_A_PIN, MOTOR_3_DIRECTION_B_PIN, MOTOR_3_ENABLE_PIN, MOTOR_3_CURRENT_SENSE_PIN, MOTOR_3_SPEED_PIN, MOTOR_4_DIRECTION_A_PIN, MOTOR_4_DIRECTION_B_PIN, MOTOR_4_ENABLE_PIN, MOTOR_4_CURRENT_SENSE_PIN, MOTOR_4_SPEED_PIN);
 PWMServo servo1;
 PWMServo servo2;
 QTRSensors reflectanceSensor;
+Encoder rightEnc(MOTOR_2_ENCODER_PIN_1, MOTOR_2_ENCODER_PIN_2); // Corresponds to motor 2 (right motors)
+Encoder leftEnc(MOTOR_3_ENCODER_PIN_1, MOTOR_3_ENCODER_PIN_2); // Corresponds to motor 3 (left motors)
 
 // Global state set to inital values
 int16_t recievedData[4];
 int16_t mode = 3; // 3 is neutral mode
 
-// Motor state variables 
+// Motor state variables
 static const int16_t MOTOR_UPPER_LIMIT = 400;
 static const int16_t MOTOR_LOWER_LIMIT = -400;
 int16_t xVelocity = 0;
@@ -68,8 +80,8 @@ static const int16_t SERVO_UPPER_LIMIT = 180; // degrees
 static const int16_t SERVO_LOWER_LIMIT = 100; // degrees
 int16_t servoPosition = 100;
 int16_t servoIncrement = 0;
-unsigned long lastServoMoveTime = 0; // milliseconds
-unsigned long servoWaitTime = 50;    // milliseconds
+unsigned long lastServoMoveTime = millis(); // milliseconds
+unsigned long servoWaitTime = 50;           // milliseconds
 
 // Reflectance sensor state variables
 uint16_t reflectanceSensorValues[REFLECTANCE_SENSOR_COUNT];
@@ -87,10 +99,33 @@ static const float RANGEFINDER_NOMINAL_WALL_DISTANCE = 20.0; // cm
 static const float RANGEFINDER_NOMINAL_WALL_MULTIPLIER = 25.0;
 
 // Hall effect sensor state variables
-static const int16_t HALL_EFFECT_SENSOR_LOW_THRESHOLD = 426; // On a 0 to 1023 scale which maps to 0 to 5 V sensor output
-static const int16_t HALL_EFFECT_SENSOR_HIGH_THRESHOLD = 760; // On a 0 to 1023 scale which maps to 0 to 5 V sensor output
+static const int16_t HALL_EFFECT_SENSOR_LOW_THRESHOLD = 430;  // On a 0 to 1023 scale which maps to 0 to 5 V sensor output
+static const int16_t HALL_EFFECT_SENSOR_HIGH_THRESHOLD = 878; // On a 0 to 1023 scale which maps to 0 to 5 V sensor output
 bool isIntroductoryMode = false;
 
+// Motor encoder state variables
+static const double MOTOR_GEAR_RATIO = 131; // 131:1
+static const int16_t ENCODER_COUNTS_PER_REV = 64;
+static const double WHEEL_RADIUS = 3.5; // cm
+int16_t rightEncoderCount = 0;
+int16_t leftEncoderCount = 0;
+unsigned long lastRightEncoderReadTime = millis();
+unsigned long lastLeftEncoderReadTime = millis();
+double prevRightMotorAngularPosition = 0;
+double prevLeftMotorAngularPosition = 0;
+double rightMotorAngularPosition = 0;
+double leftMotorAngularPosition = 0;
+double rightMotorAngularVelocity = 0;
+double leftMotorAngularVelocity = 0;
+double leftMotorPosition = 0;
+double rightMotorPosition = 0;
+
+
+// PM 9 demo variables
+bool isStraightDemo = true;
+double raduis = 10; // cm
+double straightLineGain = 5.0;
+double radiusGain = 5.0;
 
 void setup()
 {
@@ -107,7 +142,6 @@ void setup()
     servo1.attach(SERVO_1_PIN);
     servo2.attach(SERVO_2_PIN);
     writeServoIncrementToServos(); // Writes intital servo positions
-
     delay(1000);
 
     // Initialize QTR-8RC reflectance sensor
@@ -115,7 +149,7 @@ void setup()
     reflectanceSensor.setSensorPins(REFLECTANCE_SENSOR_PINS, REFLECTANCE_SENSOR_COUNT);
     reflectanceSensor.setEmitterPin(REFLECTANCE_SENSOR_EMITTER_PIN);
     // IMPLEMENT READ INTITAL VALUES AND MAKE IT BIAS
-    for(int i = 0; i < REFLECTANCE_SENSOR_COUNT; i++) // Add to bias to guarentee the "zero" value stays the zero value even with noise
+    for (int i = 0; i < REFLECTANCE_SENSOR_COUNT; i++) // Add to bias to guarentee the "zero" value stays the zero value even with noise
     {
         reflectanceSensorBias[i] = reflectanceSensorBias[i] + 200;
     }
@@ -156,7 +190,7 @@ void loop()
             {
                 mode = recievedData[0];
                 isIntroductoryMode = false; // If we updated the mode want to change out of introductory mode
-            }   
+            }
 
             // Ask for more state
             Serial2.write(255);
@@ -173,25 +207,88 @@ void loop()
     }
 
     // Determine mode and modify global sumotori state
-    // Autonomous mode
-    if (mode == 1 && !isIntroductoryMode)
+    // Check if in introductory mode
+    if (isIntroductoryMode)
     {
+        // PM 8 mode
+        yVelocity = 25;
 
+        // Introductory procedure
+        // Determine if over line, if in range of wall
+        // if not over line and wall is in range: track wall // step 1
+        // else if over line then follow line // step 2
+        // else we are at final part of intro ceremony so turn slightly right, straighten out, and turn to face center, once this is done set isIntroductoryMode to false which will return to netural mode // step 3
+    }
+    // Autonomous mode
+    else if (mode == 1)
+    {
+        if (isStraightDemo)
+        {
+
+            // NOTE: encoders and servos should not be used concurrently since when the servo and encoder library function calls are used at the same time there becomes timing issues for determing last encoder read time
+            int32_t rightEncReading = rightEnc.read() * -1; // multiply by negative 1 to make positive values mean forward
+            if (rightEncReading != rightEncoderCount) // 
+            {
+                rightEncoderCount = rightEncReading / MOTOR_GEAR_RATIO;
+                rightMotorAngularPosition = rightEncoderCount * (2 * M_PI) / ENCODER_COUNTS_PER_REV;
+                rightMotorAngularVelocity = 1000.0 * ((rightMotorAngularPosition - prevRightMotorAngularPosition) / ((double)millis() - (double)lastRightEncoderReadTime));
+                prevRightMotorAngularPosition = rightMotorAngularPosition;
+                // lastRightEncoderReadTime = millis();
+                // // Serial.print(rightEncoderCount);
+                // // Serial.print("\t");
+                // // Serial.print(rightMotorAngularPosition);
+                // // Serial.print("\t");
+                Serial.print(rightMotorAngularPosition * WHEEL_RADIUS); // distance traveled in centimeters
+                rightMotorPosition = rightMotorAngularPosition * WHEEL_RADIUS;
+                // // Serial.print("\t");
+                // // Serial.print(rightMotorAngularVelocity);
+                // // Serial.print("\t");
+                // // Serial.println(rightMotorAngularVelocity * WHEEL_RADIUS);         
+            }
+
+            int32_t leftEncReading = leftEnc.read(); // multiply by negative 1 to make positive values mean forward
+            if (leftEncReading != leftEncoderCount) // 
+            {
+                leftEncoderCount = leftEncReading / MOTOR_GEAR_RATIO;
+                leftMotorAngularPosition = leftEncoderCount * (2 * M_PI) / ENCODER_COUNTS_PER_REV;
+                leftMotorAngularVelocity = 1000.0 * ((leftMotorAngularPosition - prevLeftMotorAngularPosition) / ((double)millis() - (double)lastLeftEncoderReadTime));
+                prevLeftMotorAngularPosition = leftMotorAngularPosition;
+                lastLeftEncoderReadTime = millis();
+                // Serial.print(leftEncoderCount);
+                // Serial.print("\t");
+                // Serial.print(leftMotorAngularPosition);
+                Serial.print("\t");
+                Serial.println(leftMotorAngularPosition * WHEEL_RADIUS); // distance traveled in centimeters
+                leftMotorPosition = leftMotorAngularPosition * WHEEL_RADIUS;
+                // Serial.print("\t");
+                // Serial.print(leftMotorAngularVelocity);
+                // Serial.print("\t");
+                // Serial.println(leftMotorAngularVelocity * WHEEL_RADIUS);         
+            }
+
+            // Control Law
+            double error = (rightMotorPosition - leftMotorPosition);
+            xVelocity = straightLineGain * error * -1;
+            yVelocity = 20;
+        }
+        else
+        {
+        }
     }
     // Remote control mode
-    if (mode == 2 && !isIntroductoryMode)
+    else if (mode == 2)
     {
         servoIncrement = recievedData[1];
         xVelocity = recievedData[2];
         yVelocity = recievedData[3];
     }
     // Neutral mode- Will do nothing other than wait for Hall Effect sensor to be triggered to begin introductory mode
-    if (mode == 3 && !isIntroductoryMode)
+    else if (mode == 3)
     {
         xVelocity = 0;
         yVelocity = 0;
         servoIncrement = 0;
-        uint16_t hallEffectReading = analogRead(HALL_EFFECT_SENSOR_PIN); 
+        uint16_t hallEffectReading = analogRead(HALL_EFFECT_SENSOR_PIN);
         // Serial.println(hallEffectReading);
         if (hallEffectReading <= HALL_EFFECT_SENSOR_LOW_THRESHOLD || hallEffectReading >= HALL_EFFECT_SENSOR_HIGH_THRESHOLD)
         {
@@ -199,15 +296,9 @@ void loop()
             // Serial.println(" TRIGGERED ");
         }
     }
-    // Introductory Mode
-    if (isIntroductoryMode)
-    {
-        yVelocity = 10;
-    }
-
 
     // For now this mode is PM7 line tracking mode
-    if (mode == 5)
+    else if (mode == 5)
     {
         // Read raw sensor values
         reflectanceSensor.read(reflectanceSensorValues);
@@ -216,8 +307,8 @@ void loop()
         float weightedSum = 0;
         for (uint8_t i = 0; i < REFLECTANCE_SENSOR_COUNT; i++)
         {
-            // Serial.print(reflectanceSensorValues[i]); 
-            // Serial.print("    "); 
+            // Serial.print(reflectanceSensorValues[i]);
+            // Serial.print("    ");
             uint16_t biasedValue = 0;
             if (reflectanceSensorValues[i] > reflectanceSensorBias[i])
             {
@@ -237,54 +328,53 @@ void loop()
         {
             float lineLocation = weightedSum / sum;
             float distanceFromCenter = (lineLocation - REFLECTANCE_SENSOR_CENTER) * REFLECTANCE_SENSOR_DISTANCE_BETWEEN_SENSORS;
-            float normalizedDistanceFromCenter = distanceFromCenter / 3.5; // Normalize distance from center to -1 to 1 since can be -3.5 to 3.5
+            float normalizedDistanceFromCenter = distanceFromCenter / 3.5;                                  // Normalize distance from center to -1 to 1 since can be -3.5 to 3.5
             int16_t newXVelocity = normalizedDistanceFromCenter * REFLECTANCE_SENSOR_SPEED_MULTIPLIER * -1; // Will scale and flip our normalizedDistanceFromCenter
             // Serial.println(newXVelocity);
             xVelocity = newXVelocity;
-            if(abs(distanceFromCenter) > .25 && abs(distanceFromCenter) < 1.0)
+            if (abs(distanceFromCenter) > .25 && abs(distanceFromCenter) < 1.0)
             {
-                yVelocity = yVelocity *  (3.0 / 4.0);
+                yVelocity = yVelocity * (3.0 / 4.0);
             }
-            else if(abs(distanceFromCenter) > 1.5 && abs(distanceFromCenter) < 2.0)
+            else if (abs(distanceFromCenter) > 1.5 && abs(distanceFromCenter) < 2.0)
             {
                 yVelocity = yVelocity / 2.0;
             }
-            else if(abs(distanceFromCenter) > 2.0 && abs(distanceFromCenter) < 3.0)
+            else if (abs(distanceFromCenter) > 2.0 && abs(distanceFromCenter) < 3.0)
             {
                 yVelocity = yVelocity / 4.0;
             }
-            else if(abs(distanceFromCenter) > 3.0)
+            else if (abs(distanceFromCenter) > 3.0)
             {
                 yVelocity = 0.0;
             }
         }
-
     }
 
     // For now this mode is PM7 wall tracking mode
-    if (mode == 6)
+    else if (mode == 6)
     {
         yVelocity = 25;
-        float distance = rangefinderSensorPowerFunction(map(analogRead(RANGEFINDER_SENSOR_SIDE_RIGHT_PIN), 0, 1024, 0, 5000)/1000.0);
+        float distance = rangefinderSensorPowerFunction(map(analogRead(RANGEFINDER_SENSOR_SIDE_RIGHT_PIN), 0, 1024, 0, 5000) / 1000.0);
         // Serial.println(distance);
         float normalizedDistanceFromNominal = (distance - RANGEFINDER_NOMINAL_WALL_DISTANCE) / 5.0;
         int16_t newXVelocity = normalizedDistanceFromNominal * RANGEFINDER_NOMINAL_WALL_MULTIPLIER * -1;
         // Serial.println(newXVelocity);
         // Serial.println();
         xVelocity = newXVelocity;
-        if(xVelocity > 15)
+        if (xVelocity > 15)
         {
             xVelocity = 15;
         }
-        else if(xVelocity < -15)
+        else if (xVelocity < -15)
         {
             xVelocity = -15;
         }
     }
 
-
     // Write current motor state
     writeVelocityToMotors();
+
     // Write current servo state
     if ((millis() - lastServoMoveTime) > servoWaitTime)
     {
@@ -302,9 +392,9 @@ void loop()
         lastDataRequestTime = millis();
         // Serial.println("ASKING FOR DATA BECAUSE OF WAIT TIME");
     }
-        // Serial.println(servo1.read());
-        // Serial.println(servo2.read());
-        // Serial.println();
+    // Serial.println(servo1.read());
+    // Serial.println(servo2.read());
+    // Serial.println();
 }
 
 // Methods which help abstract code above
@@ -352,9 +442,14 @@ void writeVelocityToMotors()
 }
 
 // Used to translate and write the servo global state into servo write commands
+// Will only write to servos if servoIncrement is not 0 (This prevents interference with encoders)
 // Will limit the written servo commands to possible values
 void writeServoIncrementToServos()
 {
+    if (servoIncrement == 0) // Only write to servos if servo position has changed
+    {
+        return;
+    }
     servoPosition += servoIncrement;
 
     // Apply upper and lower limits to servo position
@@ -376,5 +471,5 @@ void writeServoIncrementToServos()
 // Translates rangefinder voltage in volts to distance in centimeters using the rangefinder power function derived from experimental data
 float rangefinderSensorPowerFunction(float voltage)
 {
-    return RANGEFINDER_SENSOR_A_CONSTANT * pow(voltage,RANGEFINDER_SENSOR_B_CONSTANT);
+    return RANGEFINDER_SENSOR_A_CONSTANT * pow(voltage, RANGEFINDER_SENSOR_B_CONSTANT);
 }
