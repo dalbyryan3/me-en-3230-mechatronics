@@ -1,4 +1,3 @@
-
 // ME EN 3220   Mechanical-Basho Arduino Mega 2560 Code     Ryan Dalby, Colby Smith, Aaron Fowlks Landon O'Camb
 
 // Libraries to be used
@@ -59,7 +58,7 @@ PWMServo servo1;
 PWMServo servo2;
 QTRSensors reflectanceSensor;
 Encoder rightEnc(MOTOR_2_ENCODER_PIN_1, MOTOR_2_ENCODER_PIN_2); // Corresponds to motor 2 (right motors)
-Encoder leftEnc(MOTOR_3_ENCODER_PIN_1, MOTOR_3_ENCODER_PIN_2); // Corresponds to motor 3 (left motors)
+Encoder leftEnc(MOTOR_3_ENCODER_PIN_1, MOTOR_3_ENCODER_PIN_2);  // Corresponds to motor 3 (left motors)
 
 // Global state set to inital values
 int16_t recievedData[4];
@@ -120,12 +119,13 @@ double leftMotorAngularVelocity = 0;
 double leftMotorPosition = 0;
 double rightMotorPosition = 0;
 
-
 // PM 9 demo variables
-bool isStraightDemo = true;
-double raduis = 10; // cm
+bool isStraightDemo = false;
 double straightLineGain = 5.0;
-double radiusGain = 5.0;
+double radiusGain = 3.5;
+static const int16_t FINAL_STRAIGHT_LINE_POSITION = 16.0; // cm
+static const int16_t TURNING_RADIUS = 20.0;               // cm
+static const int16_t WHEEL_BASE = 20.75;                  // cm
 
 void setup()
 {
@@ -185,7 +185,6 @@ void loop()
                 }
             }
             // Serial.println();
-            // IMPLEMENT UPDATE MODE
             if (recievedData[0] != mode)
             {
                 mode = recievedData[0];
@@ -207,7 +206,7 @@ void loop()
     }
 
     // Determine mode and modify global sumotori state
-    // Check if in introductory mode
+    // Check if in introductory mode (For now this is PM8 Mode which in the end would include parts of the PM9 demo mode, the hall effect triggering mechanism already implementedin PM8, and the PM7 line and wall tracking)
     if (isIntroductoryMode)
     {
         // PM 8 mode
@@ -217,62 +216,72 @@ void loop()
         // Determine if over line, if in range of wall
         // if not over line and wall is in range: track wall // step 1
         // else if over line then follow line // step 2
-        // else we are at final part of intro ceremony so turn slightly right, straighten out, and turn to face center, once this is done set isIntroductoryMode to false which will return to netural mode // step 3
+        // else we are at final part of intro ceremony so turn slightly right, straighten out, and turn to face center(using wheel odometrey to control), once this is done set isIntroductoryMode to false which will return to netural mode // step 3
     }
-    // Autonomous mode
+    // PM 9 demo mode
     else if (mode == 1)
     {
-        if (isStraightDemo)
+        // NOTE: encoders and servos should not be used concurrently since when the servo and encoder library function calls are used at the same time there becomes timing issues for determing last encoder read time
+        int32_t rightEncReading = rightEnc.read() * -1; // multiply by negative 1 to make positive values mean forward
+        if (rightEncReading != rightEncoderCount)       // Only calculate next velocity value when the value has changed to prevent erroneous 0 velocity values since we can possibly loop back before the next value is ready
         {
+            rightEncoderCount = rightEncReading / MOTOR_GEAR_RATIO;
+            rightMotorAngularPosition = rightEncoderCount * (2 * M_PI) / ENCODER_COUNTS_PER_REV;
+            rightMotorAngularVelocity = 1000.0 * ((rightMotorAngularPosition - prevRightMotorAngularPosition) / ((double)millis() - (double)lastRightEncoderReadTime));
+            prevRightMotorAngularPosition = rightMotorAngularPosition;
+            // lastRightEncoderReadTime = millis();
+            // // Serial.print(rightEncoderCount);
+            // // Serial.print("\t");
+            // // Serial.print(rightMotorAngularPosition);
+            // // Serial.print("\t");
+            Serial.print(rightMotorAngularPosition * WHEEL_RADIUS); // distance traveled in centimeters
+            rightMotorPosition = rightMotorAngularPosition * WHEEL_RADIUS;
+            // // Serial.print("\t");
+            // // Serial.print(rightMotorAngularVelocity);
+            // // Serial.print("\t");
+            // // Serial.println(rightMotorAngularVelocity * WHEEL_RADIUS);
+        }
 
-            // NOTE: encoders and servos should not be used concurrently since when the servo and encoder library function calls are used at the same time there becomes timing issues for determing last encoder read time
-            int32_t rightEncReading = rightEnc.read() * -1; // multiply by negative 1 to make positive values mean forward
-            if (rightEncReading != rightEncoderCount) // 
-            {
-                rightEncoderCount = rightEncReading / MOTOR_GEAR_RATIO;
-                rightMotorAngularPosition = rightEncoderCount * (2 * M_PI) / ENCODER_COUNTS_PER_REV;
-                rightMotorAngularVelocity = 1000.0 * ((rightMotorAngularPosition - prevRightMotorAngularPosition) / ((double)millis() - (double)lastRightEncoderReadTime));
-                prevRightMotorAngularPosition = rightMotorAngularPosition;
-                // lastRightEncoderReadTime = millis();
-                // // Serial.print(rightEncoderCount);
-                // // Serial.print("\t");
-                // // Serial.print(rightMotorAngularPosition);
-                // // Serial.print("\t");
-                Serial.print(rightMotorAngularPosition * WHEEL_RADIUS); // distance traveled in centimeters
-                rightMotorPosition = rightMotorAngularPosition * WHEEL_RADIUS;
-                // // Serial.print("\t");
-                // // Serial.print(rightMotorAngularVelocity);
-                // // Serial.print("\t");
-                // // Serial.println(rightMotorAngularVelocity * WHEEL_RADIUS);         
-            }
+        int32_t leftEncReading = leftEnc.read();
+        if (leftEncReading != leftEncoderCount) // Only calculate next velocity value when the value has changed to prevent erroneous 0 velocity values since we can possibly loop back before the next value is ready
+        {
+            leftEncoderCount = leftEncReading / MOTOR_GEAR_RATIO;
+            leftMotorAngularPosition = leftEncoderCount * (2 * M_PI) / ENCODER_COUNTS_PER_REV;
+            leftMotorAngularVelocity = 1000.0 * ((leftMotorAngularPosition - prevLeftMotorAngularPosition) / ((double)millis() - (double)lastLeftEncoderReadTime));
+            prevLeftMotorAngularPosition = leftMotorAngularPosition;
+            lastLeftEncoderReadTime = millis();
+            // Serial.print(leftEncoderCount);
+            // Serial.print("\t");
+            // Serial.print(leftMotorAngularPosition);
+            Serial.print("\t");
+            Serial.println(leftMotorAngularPosition * WHEEL_RADIUS); // distance traveled in centimeters
+            leftMotorPosition = leftMotorAngularPosition * WHEEL_RADIUS;
+            // Serial.print("\t");
+            // Serial.print(leftMotorAngularVelocity);
+            // Serial.print("\t");
+            // Serial.println(leftMotorAngularVelocity * WHEEL_RADIUS);
+        }
 
-            int32_t leftEncReading = leftEnc.read(); // multiply by negative 1 to make positive values mean forward
-            if (leftEncReading != leftEncoderCount) // 
-            {
-                leftEncoderCount = leftEncReading / MOTOR_GEAR_RATIO;
-                leftMotorAngularPosition = leftEncoderCount * (2 * M_PI) / ENCODER_COUNTS_PER_REV;
-                leftMotorAngularVelocity = 1000.0 * ((leftMotorAngularPosition - prevLeftMotorAngularPosition) / ((double)millis() - (double)lastLeftEncoderReadTime));
-                prevLeftMotorAngularPosition = leftMotorAngularPosition;
-                lastLeftEncoderReadTime = millis();
-                // Serial.print(leftEncoderCount);
-                // Serial.print("\t");
-                // Serial.print(leftMotorAngularPosition);
-                Serial.print("\t");
-                Serial.println(leftMotorAngularPosition * WHEEL_RADIUS); // distance traveled in centimeters
-                leftMotorPosition = leftMotorAngularPosition * WHEEL_RADIUS;
-                // Serial.print("\t");
-                // Serial.print(leftMotorAngularVelocity);
-                // Serial.print("\t");
-                // Serial.println(leftMotorAngularVelocity * WHEEL_RADIUS);         
-            }
-
+        if (isStraightDemo) // If we are in straight line driving mode
+        {
             // Control Law
             double error = (rightMotorPosition - leftMotorPosition);
             xVelocity = straightLineGain * error * -1;
             yVelocity = 20;
+            if (leftMotorPosition > FINAL_STRAIGHT_LINE_POSITION || rightMotorPosition > FINAL_STRAIGHT_LINE_POSITION)
+            {
+                xVelocity = 0;
+                yVelocity = 0;
+                mode = 3; // Send out of this mode into neutral mode
+            }
         }
-        else
+        else // Then in circle driving mode
         {
+            double error = (leftMotorAngularPosition / rightMotorPosition) - (WHEEL_BASE + WHEEL_RADIUS)/WHEEL_RADIUS;
+            // Serial.println(error);
+            xVelocity = radiusGain * error;
+            yVelocity = 40;
+            
         }
     }
     // Remote control mode
@@ -297,7 +306,7 @@ void loop()
         }
     }
 
-    // For now this mode is PM7 line tracking mode
+    // For now this mode is PM7 line tracking mode (Will be part of final introductory mode)
     else if (mode == 5)
     {
         // Read raw sensor values
@@ -351,7 +360,7 @@ void loop()
         }
     }
 
-    // For now this mode is PM7 wall tracking mode
+    // For now this mode is PM7 wall tracking mode (Will be part of final introductory mode)
     else if (mode == 6)
     {
         yVelocity = 25;
@@ -392,9 +401,6 @@ void loop()
         lastDataRequestTime = millis();
         // Serial.println("ASKING FOR DATA BECAUSE OF WAIT TIME");
     }
-    // Serial.println(servo1.read());
-    // Serial.println(servo2.read());
-    // Serial.println();
 }
 
 // Methods which help abstract code above
