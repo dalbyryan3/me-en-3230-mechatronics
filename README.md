@@ -1,2 +1,2 @@
-# ME-EN-3230-Mechanical-Basho
+# me-en-3230-mechatronics
 The Arduino code for the mechatronics mechanical basho competition.
